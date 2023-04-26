@@ -1,0 +1,622 @@
+CREATE OR REPLACE TRIGGER SAVE_SALES_RET 
+BEFORE UPDATE ON HD_SALES_RET 
+
+for each row
+DECLARE
+    req utl_http.req;
+    res utl_http.resp;
+    data varchar2(4000);
+    json_obj json_object_t;
+    res_text  VARCHAR2(32767);
+    success  VARCHAR2(256);
+    message  VARCHAR2(256);
+
+    company_tin VARCHAR2(256);
+    company_name VARCHAR2(256);
+    phone_number varchar2(256);
+    address_commune VARCHAR2(256);
+    address_quartier VARCHAR2(256);
+    address_avenue VARCHAR2(256);
+    item_name VARCHAR2(256);
+    customer_address VARCHAR2(256);
+    customer_tin VARCHAR2(256);
+    customer_name VARCHAR2(256);
+    payment_mode VARCHAR2(256);
+    invoice_signature VARCHAR2(512);
+    cancel_invoice VARCHAR2(256);
+    payment_type INTEGER;
+
+    quantity NUMBER := 0;
+    counter NUMBER := 1;
+
+    item_list varchar2(4000);
+    single_item varchar2(4000);
+
+    url varchar2(100) := 'http://172.30.30.108:81/abacus_ebms_middleware/add_invoice';
+
+BEGIN
+    SELECT
+      vc_CST_no,
+      VC_COMPANY_NAME,
+      VC_TELEPHONE1,
+      VC_ADDRESS1,
+      VC_ADDRESS2,
+      VC_CITY 
+    INTO
+      company_tin,
+      company_name,
+      phone_number, 
+      address_commune,
+      address_quartier,
+      address_avenue 
+    FROM
+      Makess.MST_COMPANY
+    WHERE
+      VC_COMP_CODE = :new.VC_COMP_CODE;
+    
+
+    SELECT
+      VC_MODE
+    INTO
+      payment_mode
+      
+    FROM
+      HD_INVOICE
+    WHERE
+      VC_INVOICE_NO = :new.vc_invoice_no AND VC_COMP_CODE = :new.VC_COMP_CODE;
+      
+    
+    SELECT
+      VC_TIN_NO,
+      vc_CUSTOMER_NAME,
+      VC_BILL_ADDRESS1
+    INTO
+      customer_tin,
+      customer_name,
+      customer_address 
+    FROM
+      Makess.MST_CUSTOMER
+    WHERE
+      NU_CUSTOMER_CODE = :new.nu_customer_code AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+    FOR item IN(SELECT * FROM DT_SALES_RET WHERE VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE = :new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE)
+    LOOP
+       quantity := quantity + 1; 
+    END LOOP;
+
+
+    FOR item IN(
+    SELECT
+        A.nu_qty_returned,
+        A.nu_product_rate,
+        A.nu_total,
+        B.VC_PRODUCT_NAME
+    FROM
+        DT_SALES_RET A, MST_PRODUCT B
+    WHERE
+        A.VC_GRN_NO = :new.VC_GRN_NO AND A.VC_COMP_CODE = :new.VC_COMP_CODE AND A.DT_GRN_DATE = :new.DT_GRN_DATE AND B.VC_PRODUCT_CODE=A.VC_PRODUCT_CODE AND B.VC_COMP_CODE = A.VC_COMP_CODE)
+    
+    LOOP
+        IF counter = quantity THEN
+            single_item := '{
+                "item_designation": "'|| item.VC_PRODUCT_NAME ||'",
+                "item_quantity": "'|| item.nu_qty_returned ||'",
+                "item_price": "'|| item.nu_product_rate ||'",
+                "item_ct": "0",
+                "item_tl": "0",
+                "item_price_nvat": "'|| item.nu_product_rate ||'",
+                "vat": "0",
+                "item_price_wvat": "'|| item.nu_product_rate ||'",
+                "item_total_amount": "'|| item.nu_total ||'"
+            }';
+
+        ELSE   
+            single_item := '{
+                "item_designation": "'|| item.VC_PRODUCT_NAME ||'",
+                "item_quantity": "'|| item.nu_qty_returned ||'",
+                "item_price": "'|| item.nu_product_rate ||'",
+                "item_ct": "0",
+                "item_tl": "0",
+                "item_price_nvat": "'|| item.nu_product_rate ||'",
+                "vat": "0",
+                "item_price_wvat": "'|| item.nu_product_rate ||'",
+                "item_total_amount": "'|| item.nu_total ||'"
+            },';
+        END IF;
+
+        item_list := item_list || single_item;
+        counter := counter + 1;
+    END LOOP;
+
+    
+    IF TO_CHAR(sysdate, 'YYYY-MM-DD') = TO_CHAR(:new.dt_invoice_date, 'YYYY-MM-DD') OR :new.vc_ret_type = 'F' THEN
+       cancel_invoice := TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.vc_invoice_no,5,6)));
+    END IF;
+    
+    IF (payment_mode = 'Cash') THEN
+       payment_type := 1;
+    END IF;
+    
+    IF (payment_mode = 'Credit') THEN
+       payment_type := 3;
+    END IF;
+    
+    invoice_signature := company_tin||'/ws400000197600134/'|| TO_CHAR(sysdate, 'YYYYMMDDHH24MISS') ||'/'|| SUBSTR(:new.vc_grn_no,5);
+   
+    data := '{
+      "invoice_number":"'|| SUBSTR(:new.vc_grn_no,5) ||'",
+      "invoice_date":"'|| TO_CHAR(sysdate, 'YYYY-MM-DD HH24:MI:SS') ||'",
+      "invoice_type": "RHF",
+      "tp_type": "2",
+      "tp_name": "'|| company_name ||'",
+      "tp_TIN": "'|| company_tin ||'",
+      "tp_trade_number": "62662",
+      "tp_postal_number": "",
+      "tp_phone_number": "'|| phone_number ||'",
+      "tp_address_commune": "'|| address_commune ||'",
+      "tp_address_quartier": "'|| address_quartier ||'",
+      "tp_address_avenue": "'|| address_avenue ||'",
+      "tp_address_rue": "",
+      "tp_address_number": "",
+      "vat_taxpayer": "0",
+      "ct_taxpayer": "0",
+      "tl_taxpayer": "0",
+      "tp_fiscal_center": "DGC",
+      "tp_activity_sector": "Pharmaceutical business",
+      "tp_legal_form": "LLC",
+      "payment_type": "'|| payment_type ||'",
+      "invoice_currency": "BIF",
+      "customer_name": "'|| customer_name ||'",
+      "customer_TIN": "'|| customer_tin ||'",
+      "customer_address": "'|| customer_address ||'",
+      "vat_customer_payer": "0",
+      "cancelled_invoice_ref": "'|| cancel_invoice ||'",
+      "invoice_ref": "'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.vc_invoice_no,5,6))) ||'",
+      "invoice_signature": "'|| invoice_signature ||'",
+      "invoice_signature_date": "'|| TO_CHAR(sysdate, 'YYYY-MM-DD HH24:MI:SS') ||'",
+      "invoice_items": ['|| item_list ||']
+    }';
+        
+    req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+    utl_http.set_header(req, 'content-type', 'application/json');
+    utl_http.set_header(req, 'Content-Length', length(data));
+    
+    utl_http.write_text(req, data);
+    res := utl_http.get_response(req);
+    
+    utl_http.read_text(res, res_text);
+    json_obj := json_object_t(res_text);
+    utl_http.end_response(res);
+    
+    success := json_obj.get_string('success');
+
+    IF success = 'true' THEN
+        message :=  json_obj.get_string('msg');
+    END IF;
+    
+    IF success != 'true' THEN
+        message :=  json_obj.get_string('msg');
+    END IF;
+    
+    :new.URA_RTN_AFCODE := invoice_signature;
+    :new.VC_URA_MSG := message;
+    
+    INSERT INTO EBMS_SALES_RET_RES (MESSAGE,  INVOICE_SIGNATURE, INVOICE_NUMBER, JSON) VALUES (message, invoice_signature, TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.vc_grn_no,5,6))), data);   
+END;
+
+
+
+create or replace NONEDITIONABLE TRIGGER SAVE_SALES_RETURN 
+AFTER INSERT OR UPDATE ON DT_SALES_RET
+
+for each row
+DECLARE
+    req utl_http.req;
+    res utl_http.resp;
+    data varchar2(4000);
+    json_obj json_object_t;
+    res_text  VARCHAR2(32767);
+    success  VARCHAR2(256);
+    message  VARCHAR2(256);
+
+    company_tin VARCHAR2(256);
+    company_name VARCHAR2(256);
+    phone_number varchar2(256);
+    address_commune VARCHAR2(256);
+    address_quartier VARCHAR2(256);
+    address_avenue VARCHAR2(256);
+    invoice_no VARCHAR2(256);
+    invoice_date VARCHAR2(256);
+    item_name VARCHAR2(256);
+    customer_code INTEGER;
+    customer_address VARCHAR2(256);
+    customer_tin VARCHAR2(256);
+    customer_name VARCHAR2(256);
+    payment_mode VARCHAR2(256);
+    invoice_signature VARCHAR2(512);
+    cancel_invoice VARCHAR2(256);
+    return_type VARCHAR2(256);
+    payment_type INTEGER;
+    
+    url varchar2(100) := 'http://172.30.30.108:81/abacus_ebms_middleware/add_invoice';
+
+BEGIN
+    SELECT
+      vc_CST_no,
+      VC_COMPANY_NAME,
+      VC_TELEPHONE1,
+      VC_ADDRESS1,
+      VC_ADDRESS2,
+      VC_CITY 
+    INTO
+      company_tin,
+      company_name,
+      phone_number, 
+      address_commune,
+      address_quartier,
+      address_avenue 
+    FROM
+      Makess.MST_COMPANY
+    WHERE
+      VC_COMP_CODE = :new.VC_COMP_CODE;
+    
+    
+    SELECT 
+      VC_PRODUCT_NAME   
+    INTO
+      item_name 
+    FROM 
+      MST_PRODUCT 
+    WHERE 
+      VC_PRODUCT_CODE=:new.VC_PRODUCT_CODE AND VC_COMP_CODE=:new.VC_COMP_CODE;
+    
+    
+    SELECT
+      vc_invoice_no,
+      TO_CHAR(dt_invoice_date, 'YYYY-MM-DD'),
+      nu_customer_code,
+      vc_ret_type
+    
+    INTO
+      invoice_no,
+      invoice_date,
+      customer_code,
+      return_type
+      
+    FROM
+      HD_SALES_RET
+    WHERE
+      VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE;
+    
+
+    SELECT
+      VC_MODE
+    INTO
+      payment_mode
+      
+    FROM
+      HD_INVOICE
+    WHERE
+      VC_INVOICE_NO = invoice_no AND VC_COMP_CODE = :new.VC_COMP_CODE;
+      
+    
+    SELECT
+      VC_TIN_NO,
+      vc_CUSTOMER_NAME,
+      VC_BILL_ADDRESS1
+    INTO
+      customer_tin,
+      customer_name,
+      customer_address 
+    FROM
+      Makess.MST_CUSTOMER
+    WHERE
+      NU_CUSTOMER_CODE = customer_code AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+    
+    IF TO_CHAR(sysdate, 'YYYY-MM-DD') = invoice_date OR return_type = 'F' THEN
+       cancel_invoice := TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6)));
+    END IF;
+    
+    IF (payment_mode = 'Cash') THEN
+       payment_type := 1;
+    END IF;
+    
+    IF (payment_mode = 'Credit') THEN
+       payment_type := 3;
+    END IF;
+    
+    invoice_signature := company_tin||'/ws400000197600134/'|| TO_CHAR(sysdate, 'YYYYMMDDHH24MISS') ||'/'|| SUBSTR(:new.vc_grn_no,5);
+   
+    data := '{
+      "invoice_number":"'|| SUBSTR(:new.vc_grn_no,5) ||'",
+      "invoice_date":"'|| TO_CHAR(sysdate, 'YYYY-MM-DD HH24:MI:SS') ||'",
+      "invoice_type": "RHF",
+      "tp_type": "2",
+      "tp_name": "'|| company_name ||'",
+      "tp_TIN": "'|| company_tin ||'",
+      "tp_trade_number": "62662",
+      "tp_postal_number": "",
+      "tp_phone_number": "'|| phone_number ||'",
+      "tp_address_commune": "'|| address_commune ||'",
+      "tp_address_quartier": "'|| address_quartier ||'",
+      "tp_address_avenue": "'|| address_avenue ||'",
+      "tp_address_rue": "",
+      "tp_address_number": "",
+      "vat_taxpayer": "0",
+      "ct_taxpayer": "0",
+      "tl_taxpayer": "0",
+      "tp_fiscal_center": "DGC",
+      "tp_activity_sector": "Pharmaceutical business",
+      "tp_legal_form": "LLC",
+      "payment_type": "'|| payment_type ||'",
+      "invoice_currency": "BIF",
+      "customer_name": "'|| customer_name ||'",
+      "customer_TIN": "'|| customer_tin ||'",
+      "customer_address": "'|| customer_address ||'",
+      "vat_customer_payer": "0",
+      "cancelled_invoice_ref": "'|| cancel_invoice ||'",
+      "invoice_ref": "'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))) ||'",
+      "invoice_signature": "'|| invoice_signature ||'",
+      "invoice_signature_date": "'|| TO_CHAR(sysdate, 'YYYY-MM-DD HH24:MI:SS') ||'",
+      "invoice_items": [
+        {
+          "item_designation": "'|| item_name ||'",
+          "item_quantity": "'|| :new.nu_qty_returned ||'",
+          "item_price": "'|| :new.nu_product_rate ||'",
+          "item_ct": "0",
+          "item_tl": "0",
+          "item_price_nvat": "'|| :new.nu_product_rate ||'",
+          "vat": "0",
+          "item_price_wvat": "'|| :new.nu_product_rate ||'",
+          "item_total_amount": "'|| :new.nu_total ||'"
+        }
+      ]
+    }';
+        
+    req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+    utl_http.set_header(req, 'content-type', 'application/json');
+    utl_http.set_header(req, 'Content-Length', length(data));
+    
+    utl_http.write_text(req, data);
+    res := utl_http.get_response(req);
+    
+    utl_http.read_text(res, res_text);
+    json_obj := json_object_t(res_text);
+    utl_http.end_response(res);
+    
+    success := json_obj.get_string('success');
+
+    IF success = 'true' THEN
+        message :=  json_obj.get_string('msg');
+    END IF;
+    
+    IF success != 'true' THEN
+        message :=  json_obj.get_string('msg');
+    END IF;
+
+    INSERT INTO EBMS_SALES_RET_RES (MESSAGE,  INVOICE_SIGNATURE, INVOICE_NUMBER, JSON) VALUES (message, invoice_signature, TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))), data);   
+END;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+create or replace NONEDITIONABLE TRIGGER SAVE_SALES_RETURN 
+AFTER INSERT OR UPDATE ON HD_SALES_RET
+
+for each row
+DECLARE
+    req utl_http.req;
+    res utl_http.resp;
+    data varchar2(4000);
+    json_obj json_object_t;
+    res_text  VARCHAR2(32767);
+    success  VARCHAR2(256);
+    message  VARCHAR2(256);
+
+    company_tin VARCHAR2(256);
+    company_name VARCHAR2(256);
+    phone_number varchar2(256);
+    address_commune VARCHAR2(256);
+    address_quartier VARCHAR2(256);
+    address_avenue VARCHAR2(256);
+    item_name VARCHAR2(256);
+    customer_address VARCHAR2(256);
+    customer_tin VARCHAR2(256);
+    customer_name VARCHAR2(256);
+    payment_mode VARCHAR2(256);
+    invoice_signature VARCHAR2(512);
+    cancel_invoice VARCHAR2(256);
+    payment_type INTEGER;
+
+    quantity NUMBER := 0;
+    counter NUMBER := 1;
+
+    item_list varchar2(4000);
+    single_item varchar2(4000);
+
+    url varchar2(100) := 'http://172.30.30.108:81/abacus_ebms_middleware/add_invoice';
+
+BEGIN
+    SELECT
+      vc_CST_no,
+      VC_COMPANY_NAME,
+      VC_TELEPHONE1,
+      VC_ADDRESS1,
+      VC_ADDRESS2,
+      VC_CITY 
+    INTO
+      company_tin,
+      company_name,
+      phone_number, 
+      address_commune,
+      address_quartier,
+      address_avenue 
+    FROM
+      Makess.MST_COMPANY
+    WHERE
+      VC_COMP_CODE = :new.VC_COMP_CODE;
+    
+
+    SELECT
+      VC_MODE
+    INTO
+      payment_mode
+      
+    FROM
+      HD_INVOICE
+    WHERE
+      VC_INVOICE_NO = :new.vc_invoice_no AND VC_COMP_CODE = :new.VC_COMP_CODE;
+      
+    
+    SELECT
+      VC_TIN_NO,
+      vc_CUSTOMER_NAME,
+      VC_BILL_ADDRESS1
+    INTO
+      customer_tin,
+      customer_name,
+      customer_address 
+    FROM
+      Makess.MST_CUSTOMER
+    WHERE
+      NU_CUSTOMER_CODE = :new.nu_customer_code AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+    FOR item IN(SELECT * FROM DT_SALES_RET WHERE VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE = :new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE)
+    LOOP
+       quantity := quantity + 1; 
+    END LOOP;
+
+
+    FOR item IN(
+    SELECT
+        A.nu_qty_returned,
+        A.nu_product_rate,
+        A.nu_total,
+        B.VC_PRODUCT_NAME
+    FROM
+        DT_SALES_RET A, MST_PRODUCT B
+    WHERE
+        A.VC_GRN_NO = :new.VC_GRN_NO AND A.VC_COMP_CODE = :new.VC_COMP_CODE AND A.DT_GRN_DATE = :new.DT_GRN_DATE AND B.VC_PRODUCT_CODE=A.VC_PRODUCT_CODE AND B.VC_COMP_CODE = A.VC_COMP_CODE)
+    
+    LOOP
+        IF counter = quantity THEN
+            single_item := '{
+                "item_designation": "'|| item.VC_PRODUCT_NAME ||'",
+                "item_quantity": "'|| item.nu_qty_returned ||'",
+                "item_price": "'|| item.nu_product_rate ||'",
+                "item_ct": "0",
+                "item_tl": "0",
+                "item_price_nvat": "'|| item.nu_product_rate ||'",
+                "vat": "0",
+                "item_price_wvat": "'|| item.nu_product_rate ||'",
+                "item_total_amount": "'|| item.nu_total ||'"
+            }';
+
+        ELSE   
+            single_item := '{
+                "item_designation": "'|| item.VC_PRODUCT_NAME ||'",
+                "item_quantity": "'|| item.nu_qty_returned ||'",
+                "item_price": "'|| item.nu_product_rate ||'",
+                "item_ct": "0",
+                "item_tl": "0",
+                "item_price_nvat": "'|| item.nu_product_rate ||'",
+                "vat": "0",
+                "item_price_wvat": "'|| item.nu_product_rate ||'",
+                "item_total_amount": "'|| item.nu_total ||'"
+            },';
+        END IF;
+
+        item_list := item_list || single_item;
+        counter := counter + 1;
+    END LOOP;
+
+    
+    IF TO_CHAR(sysdate, 'YYYY-MM-DD') = TO_CHAR(:new.dt_invoice_date, 'YYYY-MM-DD') OR :new.vc_ret_type = 'F' THEN
+       cancel_invoice := TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.vc_invoice_no,5,6)));
+    END IF;
+    
+    IF (payment_mode = 'Cash') THEN
+       payment_type := 1;
+    END IF;
+    
+    IF (payment_mode = 'Credit') THEN
+       payment_type := 3;
+    END IF;
+    
+    invoice_signature := company_tin||'/ws400000197600134/'|| TO_CHAR(sysdate, 'YYYYMMDDHH24MISS') ||'/'|| SUBSTR(:new.vc_grn_no,5);
+   
+    data := '{
+      "invoice_number":"'|| SUBSTR(:new.vc_grn_no,5) ||'",
+      "invoice_date":"'|| TO_CHAR(sysdate, 'YYYY-MM-DD HH24:MI:SS') ||'",
+      "invoice_type": "RHF",
+      "tp_type": "2",
+      "tp_name": "'|| company_name ||'",
+      "tp_TIN": "'|| company_tin ||'",
+      "tp_trade_number": "62662",
+      "tp_postal_number": "",
+      "tp_phone_number": "'|| phone_number ||'",
+      "tp_address_commune": "'|| address_commune ||'",
+      "tp_address_quartier": "'|| address_quartier ||'",
+      "tp_address_avenue": "'|| address_avenue ||'",
+      "tp_address_rue": "",
+      "tp_address_number": "",
+      "vat_taxpayer": "0",
+      "ct_taxpayer": "0",
+      "tl_taxpayer": "0",
+      "tp_fiscal_center": "DGC",
+      "tp_activity_sector": "Pharmaceutical business",
+      "tp_legal_form": "LLC",
+      "payment_type": "'|| payment_type ||'",
+      "invoice_currency": "BIF",
+      "customer_name": "'|| customer_name ||'",
+      "customer_TIN": "'|| customer_tin ||'",
+      "customer_address": "'|| customer_address ||'",
+      "vat_customer_payer": "0",
+      "cancelled_invoice_ref": "'|| cancel_invoice ||'",
+      "invoice_ref": "'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.vc_invoice_no,5,6))) ||'",
+      "invoice_signature": "'|| invoice_signature ||'",
+      "invoice_signature_date": "'|| TO_CHAR(sysdate, 'YYYY-MM-DD HH24:MI:SS') ||'",
+      "invoice_items": ['|| item_list ||']
+    }';
+        
+    req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+    utl_http.set_header(req, 'content-type', 'application/json');
+    utl_http.set_header(req, 'Content-Length', length(data));
+    
+    utl_http.write_text(req, data);
+    res := utl_http.get_response(req);
+    
+    utl_http.read_text(res, res_text);
+    json_obj := json_object_t(res_text);
+    utl_http.end_response(res);
+    
+    success := json_obj.get_string('success');
+
+    IF success = 'true' THEN
+        message :=  json_obj.get_string('msg');
+    END IF;
+    
+    IF success != 'true' THEN
+        message :=  json_obj.get_string('msg');
+    END IF;
+
+    INSERT INTO EBMS_SALES_RET_RES (MESSAGE,  INVOICE_SIGNATURE, INVOICE_NUMBER, JSON) VALUES (message, invoice_signature, TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.vc_grn_no,5,6))), data);   
+END;

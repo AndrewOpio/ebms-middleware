@@ -1,0 +1,1188 @@
+"invoice_signature":"400020202/ws400000197600134/20220110173045/00001"
+
+
+Add Invoice -> store invoice signature in dt_invoice table
+URA_RTN_AFCODE
+VC_URA_MSG
+
+UPDATE HD_INVOICE SET URA_RTN_AFCODE = invoice_signature, VC_URA_MSG = message WHERE VC_INVOICE_NO = :new.VC_INVOICE_NO;
+
+CREATE OR REPLACE FUNCTION Auth 
+RETURN number IS 
+  req utl_http.req;
+  res utl_http.resp;
+  json_obj json_object_t;
+  result json_object_t;
+  res_text  VARCHAR2(32767);
+  token varchar2(32767);
+  url VARCHAR(4000) := 'http://41.79.226.28:8345/ebms_api/login';
+
+BEGIN 
+    
+  req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+  utl_http.set_header(req, 'content-type', 'application/json');
+  
+  utl_http.write_text(req);
+  res := utl_http.get_response(req);
+
+  utl_http.read_text(res, res_text);
+  json_obj := json_object_t(res_text);
+
+  result := json_obj.get_Object('result');
+  token := json_obj.get_string('token');
+
+  RETURN token; 
+END; 
+
+
+invoice_number,
+invoice_date, 
+tp_type, 
+tp_name, 
+tp_TIN, 
+tp_trade_number, 
+tp_phone_number,
+tp_address_commune, 
+tp_address_quartier, 
+vat_taxpayer, 
+ct_taxpayer, 
+tl_taxpayer,
+tp_fiscal_center, 
+tp_activity_sector, 
+tp_legal_form, 
+payment_type, 
+customer_name,
+invoice_signature, 
+invoice_signature_date, 
+invoice_items, 
+item_designation, 
+item_quantity,
+item_price, 
+item_ct (concerns only those subject to the consumption tax) , 
+item_tl (concerns only those subject to the flat-rate levy),
+item_price_nvat, 
+vat, 
+item_price_wvat, 
+item_total_amount(concerns those subject to the consumption tax and the flat-rate levy)
+
+
+
+
+create or replace TRIGGER SAVE_PURCHASES 
+AFTER INSERT ON DT_PUR_ORDER 
+
+for each row
+DECLARE
+  req utl_http.req;
+  res utl_http.resp;
+  data varchar2(4000);
+  json_obj json_object_t;
+  res_text  VARCHAR2(32767);
+  code  VARCHAR2(256);
+  message  VARCHAR2(256);
+  res_date  VARCHAR2(256);
+  timestamp  VARCHAR2(256);
+  status  VARCHAR2(256);
+  error  VARCHAR2(256);
+  url varchar2(100) := 'http://192.168.0.144:81/abacus_rra_middleware/send_purchase_transaction';
+
+  supplier_code VARCHAR2(256);
+  supplier_tin VARCHAR2(256);
+  supplier_branch_id VARCHAR2(256);
+  supplier_name VARCHAR2(256);
+  registration_type_code VARCHAR2(256);
+  purchase_type_code VARCHAR2(256);
+  invoice_no VARCHAR2(256);
+  receipt_type_code VARCHAR2(256);
+  purchase_status_code VARCHAR2(256);
+  p_date VARCHAR2(256);
+  pur_date VARCHAR2(256);
+  cancel_request_date VARCHAR2(256);
+  discount_rate VARCHAR2(256);
+  total_amount VARCHAR2(256);
+  item_code VARCHAR2(256);
+  item_classification_code VARCHAR2(256);
+  item_name VARCHAR2(256);
+  bar_code VARCHAR2(256);
+
+BEGIN
+  SELECT
+    VC_order_NO,
+    vc_order_type,
+    vc_cancel_flg,
+    TO_CHAR(DT_order_DATE, 'YYYYMMDDHH24MISS'),
+    dt_mod_date,
+    nu_discount,
+    nu_supplier_code,
+    NU_PAR_IMP_ORD_VAL
+  INTO
+    invoice_no,
+    receipt_type_code,
+    purchase_status_code,
+    p_date,
+    cancel_request_date,
+    discount_rate,
+    supplier_code,
+    total_amount
+  FROM
+    hd_pur_order
+  WHERE
+    VC_ORDER_NO = :new.VC_ORDER_NO AND DT_ORDER_DATE = :new.DT_ORDER_DATE AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+  SELECT
+    VC_cst_NO,
+    nu_supplier_CODE,
+    vc_supplier_name,
+    vc_type,
+    vc_ty_code 
+  INTO
+    supplier_tin,
+    supplier_branch_id, 
+    supplier_name,
+    registration_type_code,
+    purchase_type_code
+
+  FROM
+    mst_supplier
+  WHERE
+    nu_supplier_code = supplier_code AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+  SELECT
+    TO_CHAR(DT_order_DATE, 'YYYYMMDD')
+  INTO
+    pur_date
+
+  FROM
+    hd_pur_order
+  WHERE
+    VC_ORDER_NO = :new.VC_ORDER_NO AND DT_ORDER_DATE = :new.DT_ORDER_DATE  AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+  SELECT
+    vc_product_code,
+    vc_classification,
+    vc_product_name,
+    vc_barcode1
+  INTO
+    item_code,
+    item_classification_code,
+    item_name,
+    bar_code
+  FROM
+    sales.mst_product
+  WHERE
+    VC_PRODUCT_CODE = :new.VC_ITEM_CODE AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+    data := '{
+      "username" = "ws400000197600134",
+      "password" = "9-J\\^>qX"
+    }';
+
+    data := '{
+      "tin" = "'|| :new.VC_CST_NO ||'",
+      "token" = "'|| token ||'"
+    }';
+
+    data := '{
+        "tin":"999976940",
+        "bhfId": "00",
+        "invcNo":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))) ||'",
+        "orgInvcNo":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))) ||'",
+        "spplrTin":"'|| supplier_tin ||'",
+        "spplrBhfId":"'|| supplier_branch_id ||'",
+        "spplrNm":"'|| supplier_name ||'",
+        "spplrInvcNo":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))) ||'",
+        "regTyCd":"M",
+        "pchsTyCd":"N",
+        "rcptTyCd":"P",
+        "pmtTyCd":"02",
+        "pchsSttsCd":"02",
+        "cfmDt":"'|| p_date ||'",
+        "pchsDt":"'|| pur_date ||'",
+        "wrhsDt":"'|| p_date ||'",
+        "cnclReqDt":null,
+        "cnclDt":null,
+        "rfdDt":null,
+        "totItemCnt":"1",
+        "taxblAmtA":"'|| total_amount ||'",
+        "taxblAmtB":0,
+        "taxblAmtC":0,
+        "taxblAmtD":0,
+        "taxRtA":"'|| :new.ch_vat ||'",
+        "taxRtB":0,
+        "taxRtC":0,
+        "taxRtD":0,
+        "taxAmtA":"'|| :new.nu_vat_amount ||'",
+        "taxAmtB":0,
+        "taxAmtC":0,
+        "taxAmtD":0,
+        "totTaxblAmt":"'|| total_amount ||'",
+        "totTaxAmt":"'|| :new.nu_vat_amount ||'",
+        "totAmt":"'|| total_amount ||'",
+        "remark":null, 
+        "regrNm":"Admin",
+        "regrId":"Admin",
+        "modrNm":"Admin",
+        "modrId":"Admin",
+        "itemList":[{
+            "itemSeq":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_ITEM_CODE,5,6))) ||'",
+            "itemCd":"'|| item_code ||'",
+            "itemClsCd":"'|| item_classification_code ||'",
+            "itemNm":"'|| item_name ||'",
+            "bcd":"'|| bar_code ||'",
+            "spplrItemClsCd":"'|| item_classification_code ||'",
+            "spplrItemCd":"'|| item_code ||'",
+            "spplrItemNm":"'|| item_name ||'",
+            "pkgUnitCd":"CT",
+            "pkg":"33",
+            "qtyUnitCd":"PA",
+            "qty":"'|| :new.nu_qty_ord ||'",
+            "prc":"'|| :new.nu_price ||'",
+            "splyAmt":"'|| :new.nu_qty_ord ||'",
+            "dcRt":"'|| discount_rate ||'",
+            "dcAmt":"'|| :new.nu_discount ||'",
+            "taxblAmt":"'||total_amount ||'",
+            "taxTyCd":"B",
+            "taxAmt":"'|| :new.nu_vat_amount ||'",
+            "totAmt":"'|| total_amount ||'",
+            "itemExprDt":null
+        }]
+      }';
+  
+      req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+      utl_http.set_header(req, 'content-type', 'application/json');
+      utl_http.set_header(req, 'Content-Length', length(data));
+      
+      utl_http.write_text(req, data);
+      res := utl_http.get_response(req);
+    
+      utl_http.read_text(res, res_text);
+      json_obj := json_object_t(res_text);
+      
+      code :=  json_obj.get_string('resultCd');
+      message :=  json_obj.get_string('resultMsg');
+      res_date :=  json_obj.get_string('resultDt');
+    
+      timestamp :=  json_obj.get_string('timestamp');
+      status :=  json_obj.get_string('status');
+      error :=  json_obj.get_string('error');
+          
+      INSERT INTO RRA_PURCHASES_RES (CODE, MSG, DTE, TIMESTAMP, STATUS, ERROR, JSON) VALUES (code, message, res_date, timestamp, status, error, data);  
+      
+
+      INSERT INTO EBMS_TIN_RES (MESSAGE, NBR, TAXPAYERNAME, JSON) VALUES (message, nbr, taxpayername, json);  
+
+      utl_http.end_response(res);
+END;
+
+
+message  VARCHAR2(256);
+result json_object_t;
+nbr  VARCHAR2(256);
+tax_payer json_array_t;
+tax_payer_name  VARCHAR2(256);
+
+message :=  json_obj.get_string('msg');
+result :=  json_obj.get_Object('result');
+nbr :=  result.get_string('nbr');
+tax_payer :=  result.get_Array('taxpayer');
+tax_payer_name := tax_payer.get(0).get_string('taxpayer_name');
+
+
+
+SELECT
+    vc_product_name
+  INTO
+    item_name
+  FROM
+    sales.mst_product
+  WHERE
+    VC_PRODUCT_CODE = :new.VC_ITEM_CODE AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+  SELECT
+    nu_customer_code
+  INTO
+    customer_code
+  FROM
+    sales.mst_product
+  WHERE
+    VC_PRODUCT_CODE = :new.VC_ITEM_CODE AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+  SELECT
+    vc_tin_no
+  INTO
+    customer_tin
+  FROM
+    makess.mst_customer
+  WHERE
+    NU_CUSTOMER_CODE = customer_code AND VC_COMP_CODE= :new.VC_COMP_CODE;
+
+
+
+
+
+
+
+
+
+
+company_tin VARCHAR2(256);
+company_name VARCHAR2(256);
+phone_number varchar2(256);
+address_commune VARCHAR2(256);
+address_quartier VARCHAR2(256);
+address_avenue VARCHAR2(256);
+item_name VARCHAR2(256);
+customer_code VARCHAR2(256);
+customer_address VARCHAR2(256);
+customer_tin VARCHAR2(256);
+customer_name VARCHAR2(256);
+payment_mode VARCHAR2(256);
+payment_type INTEGER;
+
+
+SELECT
+  vc_CST_no,
+  VC_COMPANY_NAME,
+  VC_TELEPHONE1,
+  VC_ADDRESS1,
+  VC_ADDRESS2,
+  VC_CITY
+  
+INTO
+  company_tin,
+  company_name,
+  phone_number,
+  address_commune,
+  address_quartier,
+  address_avenue 
+FROM
+  MST_COMPANY
+WHERE
+  VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+SELECT 
+  VC_PRODUCT_NAME   
+INTO
+  item_name 
+FROM 
+  MST_PRODUCT 
+WHERE 
+  VC_PRODUCT_CODE=:new.VC_PRODUCT_CODE AND VC_COMP_CODE=:new.VC_COMP_CODE;
+
+
+SELECT
+  NU_CUSTOMER_CODE,
+  VC_MODE
+INTO
+  customer_code,
+  payment_mode
+FROM
+  HD_INVOICE
+WHERE
+  VC_INVOICE_NO = :new.VC_INVOICE_NO AND VC_COMP_CODE = :new.VC_COMP_CODE AND DT_INVOICE_DATE = :new.DT_INVOICE_DATE;
+
+
+SELECT
+  vc_vat_no,
+  vc_CUSTOMER_NAME,
+  VC_BILL_ADDRESS1
+INTO
+  customer_tin,
+  customer_name,
+  customer_address 
+FROM
+  MST_CUSTOMER
+WHERE
+  NU_CUSTOMER_CODE = customer_code AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+IF payment_mode = 'Cash' THEN
+   payment_type := 1;
+ELSE IF payment_mode = 'Credit' THEN
+   payment_type := 3;
+END IF;
+
+data := '{
+  "invoice_number":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_INVOICE_NO,5,6))) ||'",
+  "invoice_date":"'|| TO_CHAR(:new.DT_CREATE_DATE, 'YYYY-MM-DD HH24:MI:SS') ||'",
+  "invoice_type": "FN",
+  "tp_type": "2",
+  "tp_name": "'|| company_name ||'",
+  "tp_TIN": "'|| company_tin ||'",
+  "tp_trade_numbe": "62662",
+  "tp_postal_number": "",
+  "tp_phone_number": "'|| phone_number ||'",
+  "tp_address_commune": "'|| address_commune ||'",
+  "tp_address_quartier": "'|| address_quartier ||'",
+  "tp_address_avenue": "'|| address_avenue ||'",
+  "tp_address_rue": "",
+  "tp_address_number": "",
+  "vat_taxpayer": "0",
+  "ct_taxpayer": "0",
+  "tl_taxpayer": "0",
+
+  "tp_fiscal_center": "DGC",
+  "tp_activity_sector": "SERVICE MARCHAND",
+  "tp_legal_form": "suprl",
+  
+  "payment_type": "'|| payment_mode ||'",
+  "invoice_currency": "BIF",
+  "customer_name": "'|| customer_name ||'",
+  "customer_TIN": "'|| customer_tin ||'",
+  "customer_address": "'|| customer_address ||'",
+  "vat_customer_payer": "",
+  "cancelled_invoice_ref": "",
+  "invoice_ref": "'||:new.VC_INVOICE_NO ||'",
+  "invoice_signature": "'||company_tin||'/ws400000197600134/'||TO_CHAR(DT_CREATE_DATE, 'YYYYMMDDHH24MISS')||'/'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_INVOICE_NO,5,6))) ||'",
+  "invoice_signature_date": "'|| sysdate ||'",
+  "invoice_items": [
+    {
+      "item_designation": "'|| item_name ||'",
+      "item_quantity": "'|| :new.NU_PRODUCT_QUANTITY ||'",
+      "item_price": "'|| :new.NU_PRODUCT_RATE ||'",
+      "item_ct": "'|| :new.NU_URA_TOTAL ||'",
+      "item_tl": "'|| :new.NU_URA_DISC_RATE ||'",
+      "item_price_nvat": "'|| :new.NU_PRODUCT_RATE ||'",
+      "vat": "'|| :new.NU_VAT_VALUE ||'",
+      "item_price_wvat": "'|| :new.NU_PROD_RATE ||'",
+      "item_total_amount": "'|| :new.NU_ORDER_QTY_VAL ||'"
+    }
+  ]
+}';
+
+
+------SALES RETURN------
+company_tin VARCHAR2(256);
+company_name VARCHAR2(256);
+phone_number varchar2(256);
+address_commune VARCHAR2(256);
+address_quartier VARCHAR2(256);
+address_avenue VARCHAR2(256);
+invoice_no VARCHAR2(256);
+invoice_date VARCHAR2(256);
+item_name VARCHAR2(256);
+total_amount VARCHAR2(256);
+quantity VARCHAR2(256);
+unit_price VARCHAR2(256);
+customer_code VARCHAR2(256);
+customer_address VARCHAR2(256);
+customer_tin VARCHAR2(256);
+customer_name VARCHAR2(256);
+payment_mode VARCHAR2(256);
+payment_type INTEGER;
+
+
+SELECT
+  vc_CST_no,
+  VC_COMPANY_NAME,
+  VC_TELEPHONE1,
+  VC_ADDRESS1,
+  VC_ADDRESS2,
+  VC_CITY
+  
+INTO
+  company_tin,
+  company_name,
+  phone_number,
+  address_commune,
+  address_quartier,
+  address_avenue 
+FROM
+  MST_COMPANY
+WHERE
+  VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+SELECT 
+  VC_PRODUCT_NAME   
+INTO
+  item_name 
+FROM 
+  MST_PRODUCT 
+WHERE 
+  VC_PRODUCT_CODE=:new.VC_PRODUCT_CODE AND VC_COMP_CODE=:new.VC_COMP_CODE;
+
+
+SELECT
+  vc_invoice_no,
+  nu_customer_code
+
+INTO
+  invoice_no,
+  customer_code
+
+FROM
+  HD_SALES_RET
+WHERE
+  VC_GRN_NO = :new.VC_GRN_NO AND VC_COMP_CODE=:new.VC_COMP_CODE AND DT_GRN_DATE = :new.DT_GRN_DATE;
+
+
+SELECT
+  VC_MODE,
+  DT_CREATE_DATE
+INTO
+  payment_mode,
+  invoice_date
+FROM
+  HD_INVOICE
+WHERE
+  VC_INVOICE_NO = invoice_no AND VC_COMP_CODE = :new.VC_COMP_CODE AND DT_INVOICE_DATE = :new.DT_INVOICE_DATE;
+
+
+SELECT
+  NU_ORDER_QTY_VAL,
+  NU_PRODUCT_QUANTITY,
+  NU_PRODUCT_RATE
+  
+INTO
+  total_amount,
+  quantity,
+  unit_price
+  
+FROM
+  DT_INVOICE
+WHERE
+  VC_INVOICE_NO = invoice_no AND VC_COMP_CODE=:new.VC_COMP_CODE AND VC_PRODUCT_CODE=:new.VC_PRODUCT_CODE AND DT_INVOICE_DATE = dt_invoice_date;
+
+
+SELECT
+  vc_vat_no,
+  vc_CUSTOMER_NAME,
+  VC_BILL_ADDRESS1
+INTO
+  customer_tin,
+  customer_name,
+  customer_address 
+FROM
+  MST_CUSTOMER
+WHERE
+  NU_CUSTOMER_CODE = customer_code AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+IF payment_mode = 'Cash' THEN
+   payment_type := 1;
+ELSE IF payment_mode = 'Credit' THEN
+   payment_type := 3;
+END IF;
+
+data := '{
+  "invoice_number":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))) ||'",
+  "invoice_date":"'|| TO_CHAR(invoice_date, 'YYYY-MM-DD HH24:MI:SS') ||'",
+  "invoice_type": "RC",
+  "tp_type": "2",
+  "tp_name": "'|| company_name ||'",
+  "tp_TIN": "'|| company_tin ||'",
+  "tp_trade_numbeR": "62662",
+  "tp_postal_number": "",
+  "tp_phone_number": "'|| phone_number ||'",
+  "tp_address_commune": "'|| address_commune ||'",
+  "tp_address_quartier": "'|| address_quartier ||'",
+  "tp_address_avenue": "'|| address_avenue ||'",
+  "tp_address_rue": "",
+  "tp_address_number": "",
+  "vat_taxpayer": "0",
+  "ct_taxpayer": "0",
+  "tl_taxpayer": "0",
+  "tp_fiscal_center": "DGC",
+  "tp_activity_sector": "SERVICE MARCHAND",
+  "tp_legal_form": "LLC",
+  "payment_type": "'|| payment_mode ||'",
+  "invoice_currency": "BIF",
+  "customer_name": "'|| customer_name ||'",
+  "customer_TIN": "'|| customer_tin ||'",
+  "customer_address": "'|| customer_address ||'",
+  "vat_customer_payer": "0",
+  "cancelled_invoice_ref": "",
+  "invoice_ref": "'|| invoice_no ||'",
+  "invoice_signature": "'||company_tin||'/ws400000197600134/'||TO_CHAR(invoice_date, 'YYYYMMDDHH24MISS')||'/'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))) ||'",
+  "invoice_signature_date": "'|| TO_CHAR(sysdate, 'YYYYMMDDHH24MISS') ||'",
+  "invoice_items": [
+    {
+      "item_designation": "'|| item_name ||'",
+      "item_quantity": "'|| quantity ||'",
+      "item_price": "'|| unit_price ||'",
+      "item_ct": "0",
+      "item_tl": "0",
+      "item_price_nvat": "'|| unit_price ||'",
+      "vat": "0",
+      "item_price_wvat": "'|| unit_price ||'",
+      "item_total_amount": "'|| total_amount ||'"
+    }
+  ]
+}';
+
+
+------GET INVOICE-------
+
+
+message VARCHAR2(1000);
+success VARCHAR2(1000);   
+result json_object_t;
+invoices json_array_t;
+inv_obj json_object_t;
+inv_items json_array_t;
+item_obj json_object_t;
+
+invoice_number VARCHAR2(256);
+invoice_date VARCHAR2(256);
+invoice_type VARCHAR2(256);
+tp_type VARCHAR2(256);
+tp_name VARCHAR2(1000);
+tp_TIN VARCHAR2(256);
+tp_trade_number VARCHAR2(256);
+tp_postal_number VARCHAR2(256);
+tp_phone_number VARCHAR2(256);
+tp_address_province VARCHAR2(1000);
+tp_address_commune VARCHAR2(1000);
+tp_address_quartier VARCHAR2(1000);
+tp_address_avenue VARCHAR2(1000);
+tp_address_rue VARCHAR2(1000);
+tp_address_number VARCHAR2(256);
+vat_taxpayer VARCHAR2(256);
+ct_taxpayer VARCHAR2(256);
+tl_taxpayer VARCHAR2(256);
+tp_fiscal_center VARCHAR2(256);
+tp_activity_sector VARCHAR2(256);
+tp_legal_form VARCHAR2(256);
+payment_type VARCHAR2(256);
+invoice_currency VARCHAR2(256);
+customer_name VARCHAR2(1000);
+customer_TIN VARCHAR2(256);
+customer_address VARCHAR2(1000);
+vat_customer_payer VARCHAR2(256);
+cancelled_invoice_ref VARCHAR2(256);
+cancelled_invoice VARCHAR2(256);
+invoice_ref VARCHAR2(256);
+invoice_signature VARCHAR2(256);
+invoice_signature_date VARCHAR2(256);
+
+item_designation VARCHAR2(1000);
+item_quantity VARCHAR2(256);
+item_price VARCHAR2(256);
+item_ct VARCHAR2(256);
+item_tl VARCHAR2(256);
+item_price_nvat VARCHAR2(256);
+vat VARCHAR2(256);
+item_price_wvat VARCHAR2(256);
+item_total_amount VARCHAR2(256);
+
+success := json_obj.get_string('success');
+message := json_obj.get_string('msg');
+
+IF success = 'true' THEN
+  result :=  json_obj.get_Object('result');
+  invoices := result.get_Array('invoices');
+
+  FOR i IN 0 .. invoices.get_size - 1 LOOP
+     inv_obj := json_object_t(invoices.get(i));
+     inv_items := json_array_t(inv_obj.get_Array('invoice_items'));
+      
+      invoice_signature_date := inv_obj.get_string('invoice_signature_date');
+      invoice_number:= inv_obj.get_string('invoice_number');
+      invoice_date := inv_obj.get_string('invoice_date');
+      invoice_type := inv_obj.get_string('invoice_type');
+      tp_type := inv_obj.get_string('tp_type');
+      tp_name := inv_obj.get_string('tp_name');
+      tp_TIN := inv_obj.get_string('tp_TIN');
+      tp_trade_number := inv_obj.get_string('tp_trade_number');
+      tp_postal_number := inv_obj.get_string('tp_postal_number');
+      tp_phone_number := inv_obj.get_string('tp_phone_number');
+      tp_address_province := inv_obj.get_string('tp_address_province');
+      tp_address_commune := inv_obj.get_string('tp_address_commune');
+      tp_address_quartier := inv_obj.get_string('tp_address_quartier');
+      tp_address_avenue := inv_obj.get_string('tp_address_avenue');
+      tp_address_rue := inv_obj.get_string('tp_address_rue');
+      tp_address_number := inv_obj.get_string('tp_address_number');
+      vat_taxpayer := inv_obj.get_string('vat_taxpayer');
+      ct_taxpayer := inv_obj.get_string('ct_taxpayer');
+      tl_taxpayer := inv_obj.get_string('tl_taxpayer');
+      tp_fiscal_center := inv_obj.get_string('tp_fiscal_center');
+      tp_activity_sector := inv_obj.get_string('tp_activity_sector');
+      tp_legal_form := inv_obj.get_string('tp_legal_form');
+      payment_type := inv_obj.get_string('payment_type');
+      invoice_currency := inv_obj.get_string('invoice_currency');
+      customer_name := inv_obj.get_string('customer_name');
+      customer_TIN := inv_obj.get_string('customer_TIN');
+      customer_address := inv_obj.get_string('customer_address');
+      vat_customer_payer := inv_obj.get_string('vat_customer_payer');
+      cancelled_invoice_ref := inv_obj.get_string('cancelled_invoice_ref');
+      cancelled_invoice := inv_obj.get_string('cancelled_invoice');
+      invoice_ref := inv_obj.get_string('invoice_ref');
+      invoice_signature := inv_obj.get_string('invoice_signature');
+
+     INSERT INTO EBMS_HD_INVOICE_RES (
+        INVOICE_SIGNATURE_DATE,
+        INVOICE_NUMBER,
+        INVOICE_DATE,
+        INVOICE_TYPE,
+        TAXPAYER_TYPE,
+        TAXPAYER_NAME,
+        TAXPAYER_TIN,
+        TAXPAYER_TRADE_NUMBER,
+        TAXPAYER_POSTAL_NUMBER,
+        TAXPAYER_PHONE_NUMBER,
+        TAXPAYER_ADDRESS_PROVINCE,
+        TAXPAYER_ADDRESS_COMMUNE,
+        TAXPAYER_ADDRESS_QUARTIER,
+        TAXPAYER_ADDRESS_AVENUE,
+        TAXPAYER_ADDRESS_RUE,
+        TAXPAYER_ADDRESS_NUMBER,
+        VAT_TAXPAYER,
+        CT_PAYER,
+        TL_TAXPAYER,
+        TAXPAYER_FISCAL_CENTER,
+        TAXPAYER_ACTIVITY_CENTER,
+        TAXPAYER_LEGAL_FORM,
+        PAYMENT_TYPE,
+        INVOICE_CURRENCY,
+        CUSTOMER_NAME,
+        CUSTOMER_TIN,
+        CUSTOMER_ADDRESS
+        VAT_CUSTOMER_TAXPAYER,
+        CANCELLED_INVOICE_REF,
+        CANCELLED_INVOICE,
+        INVOICE_REF,
+        INVOICE_SIGNATURE
+
+     ) VALUES (
+        invoice_signature_date,
+        invoice_number,
+        invoice_date,
+        invoice_type,
+        tp_type,
+        tp_name,
+        tp_TIN,
+        tp_trade_number,
+        tp_postal_number,
+        tp_phone_number,
+        tp_address_province,
+        tp_address_commune,
+        tp_address_quartier,
+        tp_address_avenue,
+        tp_address_rue,
+        tp_address_number,
+        vat_taxpayer,
+        ct_taxpayer,
+        tl_taxpayer,
+        tp_fiscal_center,
+        tp_activity_sector,
+        tp_legal_form,
+        payment_type,
+        invoice_currency,
+        customer_name,
+        customer_TIN,
+        customer_address,
+        vat_customer_payer,
+        cancelled_invoice_ref,
+        cancelled_invoice,
+        invoice_ref,
+        invoice_signature
+     );
+
+     FOR x IN 0 .. inv_items.get_size - 1 LOOP
+        item_obj := json_object_t(inv_items.get(x));
+
+        item_designation := item_obj.get_string('item_designation');
+        item_quantity := item_obj.get_string('item_quantity');
+        item_price := item_obj.get_string('item_price');
+        item_ct := item_obj.get_string('item_ct');
+        item_tl := item_obj.get_string('item_tl');
+        item_price_nvat := item_obj.get_string('item_price_nvat');
+        vat := item_obj.get_string('vat');
+        item_price_wvat := item_obj.get_string('item_price_wvat');
+        item_total_amount := item_obj.get_string('item_total_amount');
+
+        INSERT INTO EBMS_DT_INVOICE_RES (
+          INVOICE_SIGNATURE_DATE,
+          ITEM_DESIGNATION,
+          ITEM_QUANTITY,
+          ITEM_PRICE,
+          ITEM_CT,
+          ITEM_TL,
+          ITEM_PRICE_NVAT,
+          VAT,
+          ITEM_PRICE_WVAT,
+          ITEM_TOTAL_AMOUNT
+
+        ) VALUES (
+          invoice_signature_date,
+          item_designation,
+          item_quantity,
+          item_price,
+          item_ct,
+          item_tl,
+          item_price_nvat,
+          vat,
+          item_price_wvat,
+          item_total_amount
+        );        
+     END LOOP;
+  END LOOP;        
+END IF;
+
+INSERT INTO EBMS_GET_INVOICE_RES (INVOICE_NUMBER, MESSAGE, JSON) VALUES (, message, data);
+
+
+
+Aircraft - add image of Aircraft
+Pricing - Multiply flght time with amount per flying hour.
+
+
+
+CREATE OR REPLACE TRIGGER TEST_TRIGGER    
+    FOR UPDATE OR INSERT ON DT_INVOICE    
+    COMPOUND TRIGGER     
+   
+    AFTER EACH ROW IS    
+    BEGIN  
+      NULL;
+    END AFTER EACH ROW;    
+
+    AFTER STATEMENT IS    
+    BEGIN      
+      NULL;
+    END AFTER STATEMENT;    
+END; 
+
+
+
+
+SUBSTR(REPLACE(:new.INVOICE_NUMBER, 'AP', '00'), 1, INSTR(REPLACE(:new.INVOICE_NUMBER, 'AP', '00'), '/')-1)
+
+SELECT dt_invoice_date, SUBSTR(:new.VC_GRN_NO, 5), 1, INSTR(REPLACE(VC_INVOICE_NO, 'AP', '00'), '/')-1)  || SUBSTR(VC_INVOICE_NO, INSTR(VC_INVOICE_NO, '/')+3) FROM HD_INVOICE WHERE VC_COMP_CODE = '02'
+
+
+
+
+
+
+{
+          "invoice_number":"0100026895",
+          "invoice_date":"2022-10-18 00:00:30",
+          "invoice_type": "FN",
+          "tp_type": "2",
+          "tp_name": "ABACUS PHARMA (A) LTD",
+          "tp_TIN": "4000001976",
+          "tp_trade_number": "62662",
+          "tp_postal_number": "",
+          "tp_phone_number": "+25722254599",
+          "tp_address_commune": "AV.Chaussee PLR No. 04",
+          "tp_address_quartier": "RWAGASORE ,B.P. 6525,BUJUMBURA",
+          "tp_address_avenue": "BUJUMBURA",
+          "tp_address_rue": "",
+          "tp_address_number": "",
+          "vat_taxpayer": "0",
+          "ct_taxpayer": "0",
+          "tl_taxpayer": "0",
+          "tp_fiscal_center": "DGC",
+          "tp_activity_sector": "Pharmaceutical business",
+          "tp_legal_form": "LLC",
+          "payment_type": "3",
+          "invoice_currency": "BIF",
+          "customer_name": "MPAWENIMANA JEAN",
+          "customer_TIN": "",
+          "customer_address": "",
+          "vat_customer_payer": "0",
+          "cancelled_invoice_ref": "",
+          "invoice_ref": "",
+          "invoice_signature": "4000001976/wsl400000197600120/20221018000030/0100026895",
+          "invoice_signature_date": "2022-10-18 00:00:30",
+          "invoice_items": [{
+                  "item_designation": "Albendazole Syp",
+                  "item_quantity": "50",
+                  "item_price": "380",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "380",
+                  "vat": "0",
+                  "item_price_wvat": "380",
+                  "item_total_amount": "19000"
+                },{
+                  "item_designation": "Azithromycin Syp 200Mg/5Ml Fl/15Ml (Azopil)",
+                  "item_quantity": "10",
+                  "item_price": "2500",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "2500",
+                  "vat": "0",
+                  "item_price_wvat": "2500",
+                  "item_total_amount": "25000"
+                },{
+                  "item_designation": "Action Tab B/100'S",
+                  "item_quantity": "2",
+                  "item_price": "11990",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "11990",
+                  "vat": "0",
+                  "item_price_wvat": "11990",
+                  "item_total_amount": "23980"
+                },{
+                  "item_designation": "Antalgex Gel B/20",
+                  "item_quantity": "5",
+                  "item_price": "6690",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "6690",
+                  "vat": "0",
+                  "item_price_wvat": "6690",
+                  "item_total_amount": "33450"
+                },{
+                  "item_designation": "Ciprofloxacin 500Mg &Tinidazole 600Mg Tab B/10x10s",
+                  "item_quantity": "2",
+                  "item_price": "15500",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "15500",
+                  "vat": "0",
+                  "item_price_wvat": "15500",
+                  "item_total_amount": "31000"
+                },{
+                  "item_designation": "Ablartem Tab B/24'S",
+                  "item_quantity": "60",
+                  "item_price": "2300",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "2300",
+                  "vat": "0",
+                  "item_price_wvat": "2300",
+                  "item_total_amount": "138000"
+                },{
+                  "item_designation": "Phloroglucinol Tablet Abacus B/30s
+",
+                  "item_quantity": "3",
+                  "item_price": "7200",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "7200",
+                  "vat": "0",
+                  "item_price_wvat": "7200",
+                  "item_total_amount": "21600"
+                },{
+                  "item_designation": "Funbact-A Cream T/30 Gr",
+                  "item_quantity": "30",
+                  "item_price": "2800",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "2800",
+                  "vat": "0",
+                  "item_price_wvat": "2800",
+                  "item_total_amount": "84000"
+                },{
+                  "item_designation": "Phenoxymethylpenicillin Tab B.P 250Mg B/10x10s",
+                  "item_quantity": "10",
+                  "item_price": "5500",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "5500",
+                  "vat": "0",
+                  "item_price_wvat": "5500",
+                  "item_total_amount": "55000"
+                },{
+                  "item_designation": "Tetracycline Ointement Optha T/5Gr",
+                  "item_quantity": "20",
+                  "item_price": "350",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "350",
+                  "vat": "0",
+                  "item_price_wvat": "350",
+                  "item_total_amount": "7000"
+                },{
+                  "item_designation": "Quinine Sulphate Tab 500Mg B/100'S",
+                  "item_quantity": "5",
+                  "item_price": "23000",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "23000",
+                  "vat": "0",
+                  "item_price_wvat": "23000",
+                  "item_total_amount": "115000"
+                },{
+                  "item_designation": "MetronidazoleTab 250Mg B/100*10",
+                  "item_quantity": "2",
+                  "item_price": "25000",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "25000",
+                  "vat": "0",
+                  "item_price_wvat": "25000",
+                  "item_total_amount": "50000"
+                },{
+                  "item_designation": "Norfloxacin 100Mg+Metronidazol 125Mg Susp Fl/100",
+                  "item_quantity": "30",
+                  "item_price": "1690",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "1690",
+                  "vat": "0",
+                  "item_price_wvat": "1690",
+                  "item_total_amount": "50700"
+                },{
+                  "item_designation": "Neomycin & Dexamethasone(XSoneN) Eye/Ear Drops 5Ml",
+                  "item_quantity": "20",
+                  "item_price": "1090",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "1090",
+                  "vat": "0",
+                  "item_price_wvat": "1090",
+                  "item_total_amount": "21800"
+                },{
+                  "item_designation": "Extra Relief Tab 10*50'S",
+                  "item_quantity": "2",
+                  "item_price": "24000",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "24000",
+                  "vat": "0",
+                  "item_price_wvat": "24000",
+                  "item_total_amount": "48000"
+                },{                                                     
+                  "item_designation": "Magnomint Tab 10X10S",
+                  "item_quantity": "10",
+                  "item_price": "1890",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "1890",
+                  "vat": "0",
+                  "item_price_wvat": "1890",
+                  "item_total_amount": "18900"
+                },{
+                  "item_designation": "Predilone Tab 5Mg 10X10S",
+                  "item_quantity": "5",
+                  "item_price": "2300",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "2300",
+                  "vat": "0",
+                  "item_price_wvat": "2300",
+                  "item_total_amount": "11500"
+                },{
+                  "item_designation": "Vivian Tab 100Mg B/200",
+                  "item_quantity": "2",
+                  "item_price": "6500",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "6500",
+                  "vat": "0",
+                  "item_price_wvat": "6500",
+                  "item_total_amount": "13000"
+                },{
+                  "item_designation": "Vitamin B Complex Tab B/10x10",
+                  "item_quantity": "5",
+                  "item_price": "1690",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "1690",
+                  "vat": "0",
+                  "item_price_wvat": "1690",
+                  "item_total_amount": "8450"
+                },{
+                  "item_designation": "Multivitamin Sirop Fl/100Ml",
+                  "item_quantity": "10",
+                  "item_price": "1000",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "1000",
+                  "vat": "0",
+                  "item_price_wvat": "1000",
+                  "item_total_amount": "10000"
+                },{
+                  "item_designation": "Welgra Tab 100Mg B/4'S",
+                  "item_quantity": "30",
+                  "item_price": "1800",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "1800",
+                  "vat": "0",
+                  "item_price_wvat": "1800",
+                  "item_total_amount": "54000"
+                },{
+                  "item_designation": "Cloxacillin Dry Sol B.P(Cloxispa) 250Mg/5Ml 100Ml",
+                  "item_quantity": "10",
+                  "item_price": "1990",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "1990",
+                  "vat": "0",
+                  "item_price_wvat": "1990",
+                  "item_total_amount": "19900"
+                },{
+                  "item_designation": "Furosemide Tab 40Mg B/10x10s",
+                  "item_quantity": "5",
+                  "item_price": "2990",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "2990",
+                  "vat": "0",
+                  "item_price_wvat": "2990",
+                  "item_total_amount": "14950"
+                },{
+                  "item_designation": "Paracetamol Tab 500Mg 10x100s",
+                  "item_quantity": "3",
+                  "item_price": "26000",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "26000",
+                  "vat": "0",
+                  "item_price_wvat": "26000",
+                  "item_total_amount": "78000"
+                },{
+                  "item_designation": "Good Morning Lung tonic Syrup Fl/60Ml",
+                  "item_quantity": "5",
+                  "item_price": "3190",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "3190",
+                  "vat": "0",
+                  "item_price_wvat": "3190",
+                  "item_total_amount": "15950"
+                },{
+                  "item_designation": "Toto Gripe Water Fl/120Ml",
+                  "item_quantity": "5",
+                  "item_price": "1300",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "1300",
+                  "vat": "0",
+                  "item_price_wvat": "1300",
+                  "item_total_amount": "6500"
+                },{
+                  "item_designation": "Tinidazole Tab 500Mg B/25X4",
+                  "item_quantity": "10",
+                  "item_price": "7000",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "7000",
+                  "vat": "0",
+                  "item_price_wvat": "7000",
+                  "item_total_amount": "70000"
+                },{
+                  "item_designation": "Diclofenac Gastro Resistant  Tab 100Mg",
+                  "item_quantity": "10",
+                  "item_price": "1790",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "1790",
+                  "vat": "0",
+                  "item_price_wvat": "1790",
+                  "item_total_amount": "17900"
+                },{
+                  "item_designation": "Glibenclamide Tab 5Mg B/10x10s",
+                  "item_quantity": "3",
+                  "item_price": "1500",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "1500",
+                  "vat": "0",
+                  "item_price_wvat": "1500",
+                  "item_total_amount": "4500"
+                }]
+        }

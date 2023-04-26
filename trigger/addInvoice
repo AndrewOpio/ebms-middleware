@@ -1,0 +1,622 @@
+create or replace NONEDITIONABLE TRIGGER SAVE_INVOICE 
+AFTER INSERT OR UPDATE ON DT_INVOICE 
+
+for each row
+DECLARE
+    counter NUMBER;
+    order_number VARCHAR2(256);
+    quantity NUMBER := 0;
+
+BEGIN
+    SELECT 
+       COUNTER
+    INTO
+       counter
+    FROM 
+       EXECUTE_SAVE_INVOICE 
+    WHERE 
+       INVOICE_NUMBER = :new.VC_INVOICE_NO AND COMP_CODE = :new.VC_COMP_CODE AND INVOICE_DATE = :new.DT_INVOICE_DATE;
+
+    UPDATE EXECUTE_SAVE_INVOICE SET COUNTER = counter + 1 WHERE INVOICE_NUMBER = :new.VC_INVOICE_NO AND COMP_CODE = :new.VC_COMP_CODE AND INVOICE_DATE = :new.DT_INVOICE_DATE;
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        SELECT 
+           VC_ORDER_NO
+        INTO
+          order_number
+        FROM
+          HD_INVOICE
+    
+        WHERE
+          VC_INVOICE_NO = :new.VC_INVOICE_NO AND DT_INVOICE_DATE = :new.DT_INVOICE_DATE;
+
+        FOR item IN(SELECT * FROM DT_SALES_ORDER WHERE VC_ORDER_NO = order_number AND DT_ORDER_DATE = :new.DT_INVOICE_DATE)
+        LOOP
+          quantity := quantity + 1;
+        END LOOP;
+        
+        INSERT INTO EXECUTE_SAVE_INVOICE (INVOICE_NUMBER, INVOICE_DATE, COMP_CODE, QUANTITY, COUNTER) VALUES (:new.VC_INVOICE_NO, :new.DT_INVOICE_DATE, :new.VC_COMP_CODE, quantity, 1);   
+END;
+
+
+
+
+create or replace NONEDITIONABLE TRIGGER EXECUTE_SAVE_INVOICE 
+AFTER INSERT OR UPDATE ON EXECUTE_SAVE_INVOICE 
+
+for each row
+DECLARE
+    req utl_http.req;
+    res utl_http.resp;
+    data varchar2(4000);
+    json_obj json_object_t;
+    res_text  VARCHAR2(32767);
+    success  VARCHAR2(256);
+    message  VARCHAR2(256);
+
+    company_tin VARCHAR2(256);
+    company_name VARCHAR2(256);
+    phone_number varchar2(256);
+    address_commune VARCHAR2(256);
+    address_quartier VARCHAR2(256);
+    address_avenue VARCHAR2(256);
+    item_name VARCHAR2(256);
+    customer_code VARCHAR2(256);
+    customer_address VARCHAR2(256);
+    customer_tin VARCHAR2(256);
+    customer_name VARCHAR2(256);
+    invoice_signature VARCHAR2(256);
+    payment_mode VARCHAR2(256);
+    payment_type INTEGER;
+    create_date DATE;
+
+    order_number VARCHAR2(256);
+    item_list varchar2(4000);
+    single_item varchar2(4000);
+
+    url varchar2(100) := 'http://172.30.30.108:81/abacus_ebms_middleware/add_invoice';
+
+BEGIN
+    IF :new.QUANTITY = :new.COUNTER THEN
+        SELECT
+          vc_CST_no,
+          VC_COMPANY_NAME,
+          VC_TELEPHONE1,
+          VC_ADDRESS1,
+          VC_ADDRESS2,
+          VC_CITY 
+        INTO
+          company_tin,
+          company_name,
+          phone_number, 
+          address_commune,
+          address_quartier,
+          address_avenue 
+        FROM
+          Makess.MST_COMPANY
+        WHERE
+          VC_COMP_CODE = :new.COMP_CODE;
+        
+        SELECT
+          NU_CUSTOMER_CODE,
+          VC_MODE,
+          DT_CREATE_DATE,
+          VC_ORDER_NO
+        INTO
+          customer_code,
+          payment_mode,
+          create_date,
+          order_number
+        FROM
+          HD_INVOICE
+        WHERE
+          VC_INVOICE_NO = :new.INVOICE_NUMBER AND VC_COMP_CODE = :new.COMP_CODE AND DT_INVOICE_DATE = :new.INVOICE_DATE;
+    
+        
+        SELECT
+          VC_TIN_NO,
+          vc_CUSTOMER_NAME,
+          VC_BILL_ADDRESS1
+        INTO
+          customer_tin,
+          customer_name,
+          customer_address 
+        FROM
+          Makess.MST_CUSTOMER
+        WHERE
+          NU_CUSTOMER_CODE = customer_code AND VC_COMP_CODE = :new.COMP_CODE;
+    
+    
+        FOR item IN(
+        SELECT
+            A.NU_PRODUCT_QTY,
+            A.NU_PRODUCT_RATE,
+            A.NU_ORDER_QTY_VAL,
+            A.NU_ITEM_SERIAL,
+            B.VC_PRODUCT_NAME
+        FROM
+            DT_SALES_ORDER A, MST_PRODUCT B
+        WHERE
+            A.VC_ORDER_NO = order_number AND A.DT_ORDER_DATE = :new.INVOICE_DATE AND B.VC_PRODUCT_CODE=A.VC_PRODUCT_CODE AND B.VC_COMP_CODE = A.VC_COMP_CODE)
+        
+        LOOP
+            IF item.NU_ITEM_SERIAL = :new.QUANTITY THEN
+                single_item := '{
+                  "item_designation": "'|| item.VC_PRODUCT_NAME ||'",
+                  "item_quantity": "'|| item.NU_PRODUCT_QTY ||'",
+                  "item_price": "'|| item.NU_PRODUCT_RATE ||'",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "'|| item.NU_PRODUCT_RATE ||'",
+                  "vat": "0",
+                  "item_price_wvat": "'|| item.NU_PRODUCT_RATE ||'",
+                  "item_total_amount": "'|| item.NU_ORDER_QTY_VAL ||'"
+                }';
+    
+            ELSE
+                single_item := '{
+                  "item_designation": "'|| item.VC_PRODUCT_NAME ||'",
+                  "item_quantity": "'|| item.NU_PRODUCT_QTY ||'",
+                  "item_price": "'|| item.NU_PRODUCT_RATE ||'",
+                  "item_ct": "0",
+                  "item_tl": "0",
+                  "item_price_nvat": "'|| item.NU_PRODUCT_RATE ||'",
+                  "vat": "0",
+                  "item_price_wvat": "'|| item.NU_PRODUCT_RATE ||'",
+                  "item_total_amount": "'|| item.NU_ORDER_QTY_VAL ||'"
+                },';
+            END IF;
+        
+            item_list := item_list || single_item ;
+            
+        END LOOP;
+    
+    
+        IF (payment_mode = 'Cash') THEN
+           payment_type := 1;
+        END IF;
+        
+        IF (payment_mode = 'Credit') THEN
+           payment_type := 3;
+        END IF;
+        
+        invoice_signature := company_tin||'/ws400000197600134/'||TO_CHAR(create_date, 'YYYYMMDDHH24MISS')||'/'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.INVOICE_NUMBER,5,6)));
+        
+        data := '{
+          "invoice_number":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.INVOICE_NUMBER,5,6))) ||'",
+          "invoice_date":"'|| TO_CHAR(create_date, 'YYYY-MM-DD HH24:MI:SS') ||'",
+          "invoice_type": "FN",
+          "tp_type": "2",
+          "tp_name": "'|| company_name ||'",
+          "tp_TIN": "'|| company_tin ||'",
+          "tp_trade_number": "62662",
+          "tp_postal_number": "",
+          "tp_phone_number": "'|| phone_number ||'",
+          "tp_address_commune": "'|| address_commune ||'",
+          "tp_address_quartier": "'|| address_quartier ||'",
+          "tp_address_avenue": "'|| address_avenue ||'",
+          "tp_address_rue": "",
+          "tp_address_number": "",
+          "vat_taxpayer": "0",
+          "ct_taxpayer": "0",
+          "tl_taxpayer": "0",
+          "tp_fiscal_center": "DGC",
+          "tp_activity_sector": "Pharmaceutical business",
+          "tp_legal_form": "LLC",
+          "payment_type": "'|| payment_type ||'",
+          "invoice_currency": "BIF",
+          "customer_name": "'|| customer_name ||'",
+          "customer_TIN": "'|| customer_tin ||'",
+          "customer_address": "'|| customer_address ||'",
+          "vat_customer_payer": "0",
+          "cancelled_invoice_ref": "",
+          "invoice_ref": "",
+          "invoice_signature": "'|| invoice_signature ||'",
+          "invoice_signature_date": "'|| TO_CHAR(sysdate, 'YYYY-MM-DD HH24:MI:SS') ||'",
+          "invoice_items": ['|| item_list ||']
+        }';
+        
+        req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+        utl_http.set_header(req, 'content-type', 'application/json');
+        utl_http.set_header(req, 'Content-Length', length(data));
+        
+        utl_http.write_text(req, data);
+        res := utl_http.get_response(req);
+        
+        utl_http.read_text(res, res_text);
+        json_obj := json_object_t(res_text);
+        utl_http.end_response(res);
+        
+        success := json_obj.get_string('success');
+    
+        IF success = 'true' THEN
+            message :=  json_obj.get_string('msg');
+        END IF;
+        
+        IF success != 'true' THEN
+            message :=  json_obj.get_string('msg');
+        END IF;
+        
+    
+        INSERT INTO EBMS_SALES_INVOICE_RES (MESSAGE, INVOICE_SIGNATURE, INVOICE_NUMBER, JSON) VALUES (message, invoice_signature, TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.INVOICE_NUMBER,5,6))), data);   
+        UPDATE HD_INVOICE SET URA_RTN_AFCODE = invoice_signature, VC_URA_MSG = message WHERE VC_INVOICE_NO = :new.INVOICE_NUMBER AND DT_INVOICE_DATE = :new.INVOICE_DATE;
+    END IF;
+END;
+
+
+
+
+
+
+
+create or replace NONEDITIONABLE TRIGGER SAVE_INVOICE 
+AFTER INSERT OR UPDATE ON DT_INVOICE 
+
+for each row
+DECLARE
+    req utl_http.req;
+    res utl_http.resp;
+    data varchar2(4000);
+    json_obj json_object_t;
+    res_text  VARCHAR2(32767);
+    success  VARCHAR2(256);
+    message  VARCHAR2(256);
+
+    company_tin VARCHAR2(256);
+    company_name VARCHAR2(256);
+    phone_number varchar2(256);
+    address_commune VARCHAR2(256);
+    address_quartier VARCHAR2(256);
+    address_avenue VARCHAR2(256);
+    item_name VARCHAR2(256);
+    customer_code VARCHAR2(256);
+    customer_address VARCHAR2(256);
+    customer_tin VARCHAR2(256);
+    customer_name VARCHAR2(256);
+    payment_mode VARCHAR2(256);
+    invoice_signature VARCHAR2(256);
+    payment_type INTEGER;
+    
+    url varchar2(100) := 'http://172.30.30.108:81/abacus_ebms_middleware/add_invoice';
+
+BEGIN
+    SELECT
+      vc_CST_no,
+      VC_COMPANY_NAME,
+      VC_TELEPHONE1,
+      VC_ADDRESS1,
+      VC_ADDRESS2,
+      VC_CITY 
+    INTO
+      company_tin,
+      company_name,
+      phone_number, 
+      address_commune,
+      address_quartier,
+      address_avenue 
+    FROM
+      Makess.MST_COMPANY
+    WHERE
+      VC_COMP_CODE = :new.VC_COMP_CODE;
+    
+    
+    SELECT 
+      VC_PRODUCT_NAME   
+    INTO
+      item_name 
+    FROM 
+      MST_PRODUCT 
+    WHERE 
+      VC_PRODUCT_CODE=:new.VC_PRODUCT_CODE AND VC_COMP_CODE=:new.VC_COMP_CODE;
+    
+    
+    SELECT
+      NU_CUSTOMER_CODE,
+      VC_MODE
+    INTO
+      customer_code,
+      payment_mode
+    FROM
+      HD_INVOICE
+    WHERE
+      VC_INVOICE_NO = :new.VC_INVOICE_NO AND VC_COMP_CODE = :new.VC_COMP_CODE AND DT_INVOICE_DATE = :new.DT_INVOICE_DATE;
+    
+    
+    SELECT
+      VC_TIN_NO,
+      vc_CUSTOMER_NAME,
+      VC_BILL_ADDRESS1
+    INTO
+      customer_tin,
+      customer_name,
+      customer_address 
+    FROM
+      Makess.MST_CUSTOMER
+    WHERE
+      NU_CUSTOMER_CODE = customer_code AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+    IF (payment_mode = 'Cash') THEN
+       payment_type := 1;
+    END IF;
+    
+    IF (payment_mode = 'Credit') THEN
+       payment_type := 3;
+    END IF;
+    
+    invoice_signature := company_tin||'/ws400000197600134/'||TO_CHAR(:new.DT_CREATE_DATE, 'YYYYMMDDHH24MISS')||'/'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_INVOICE_NO,5,6)));
+    
+    data := '{
+      "invoice_number":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_INVOICE_NO,5,6))) ||'",
+      "invoice_date":"'|| TO_CHAR(:new.DT_CREATE_DATE, 'YYYY-MM-DD HH24:MI:SS') ||'",
+      "invoice_type": "FN",
+      "tp_type": "2",
+      "tp_name": "'|| company_name ||'",
+      "tp_TIN": "'|| company_tin ||'",
+      "tp_trade_number": "62662",
+      "tp_postal_number": "",
+      "tp_phone_number": "'|| phone_number ||'",
+      "tp_address_commune": "'|| address_commune ||'",
+      "tp_address_quartier": "'|| address_quartier ||'",
+      "tp_address_avenue": "'|| address_avenue ||'",
+      "tp_address_rue": "",
+      "tp_address_number": "",
+      "vat_taxpayer": "0",
+      "ct_taxpayer": "0",
+      "tl_taxpayer": "0",
+      "tp_fiscal_center": "DGC",
+      "tp_activity_sector": "Pharmaceutical business",
+      "tp_legal_form": "LLC",
+      "payment_type": "'|| payment_type ||'",
+      "invoice_currency": "BIF",
+      "customer_name": "'|| customer_name ||'",
+      "customer_TIN": "'|| customer_tin ||'",
+      "customer_address": "'|| customer_address ||'",
+      "vat_customer_payer": "0",
+      "cancelled_invoice_ref": "",
+      "invoice_ref": "",
+      "invoice_signature": "'|| invoice_signature ||'",
+      "invoice_signature_date": "'|| TO_CHAR(sysdate, 'YYYY-MM-DD HH24:MI:SS') ||'",
+      "invoice_items": [
+        {
+          "item_designation": "'|| item_name ||'",
+          "item_quantity": "'|| :new.NU_PRODUCT_QUANTITY ||'",
+          "item_price": "'|| :new.NU_PRODUCT_RATE ||'",
+          "item_ct": "0",
+          "item_tl": "0",
+          "item_price_nvat": "'|| :new.NU_PRODUCT_RATE ||'",
+          "vat": "'|| :new.NU_VAT_VALUE ||'",
+          "item_price_wvat": "'|| :new.NU_FIELD2 ||'",
+          "item_total_amount": "'|| :new.NU_ORDER_QTY_VAL ||'"
+        }
+      ]
+    }';
+    
+    req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+    utl_http.set_header(req, 'content-type', 'application/json');
+    utl_http.set_header(req, 'Content-Length', length(data));
+    
+    utl_http.write_text(req, data);
+    res := utl_http.get_response(req);
+    
+    utl_http.read_text(res, res_text);
+    json_obj := json_object_t(res_text);
+    utl_http.end_response(res);
+    
+    success := json_obj.get_string('success');
+
+    IF success = 'true' THEN
+        message :=  json_obj.get_string('msg');
+    END IF;
+    
+    IF success != 'true' THEN
+        message :=  json_obj.get_string('msg');
+    END IF;
+    
+
+    INSERT INTO EBMS_SALES_INVOICE_RES (MESSAGE, INVOICE_SIGNATURE, INVOICE_NUMBER, JSON) VALUES (message, invoice_signature, TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_INVOICE_NO,5,6))), data);   
+    UPDATE HD_INVOICE SET URA_RTN_AFCODE = invoice_signature, VC_URA_MSG = message WHERE VC_INVOICE_NO = :new.VC_INVOICE_NO AND DT_INVOICE_DATE = :new.DT_INVOICE_DATE;
+
+END;
+
+
+
+
+
+
+
+
+create or replace NONEDITIONABLE TRIGGER SAVE_INVOICE 
+AFTER INSERT OR UPDATE ON DT_TRANSACTION 
+
+for each row
+DECLARE
+    req utl_http.req;
+    res utl_http.resp;
+    data varchar2(4000);
+    json_obj json_object_t;
+    res_text  VARCHAR2(32767);
+    success  VARCHAR2(256);
+    message  VARCHAR2(256);
+
+    invoice_no VARCHAR2(256);
+    invoice_date VARCHAR2(256);
+    company_tin VARCHAR2(256);
+    company_name VARCHAR2(256);
+    phone_number varchar2(256);
+    address_commune VARCHAR2(256);
+    address_quartier VARCHAR2(256);
+    address_avenue VARCHAR2(256);
+    item_name VARCHAR2(256);
+    customer_address VARCHAR2(256);
+    customer_code VARCHAR2(256);
+    customer_tin VARCHAR2(256);
+    customer_name VARCHAR2(256);
+    invoice_signature VARCHAR2(256);
+    payment_mode VARCHAR2(256);
+    create_date VARCHAR2(256);
+    payment_type INTEGER;
+
+    item_list json_array_t;
+    single_item json_object_t;
+
+    url varchar2(100) := 'http://172.30.30.108:81/abacus_ebms_middleware/add_invoice';
+
+BEGIN
+    invoice_no := SUBSTR(SUBSTR(VC_NARRATION, INSTR(VC_NARRATION, 'AP0')), 0 , INSTR(SUBSTR(VC_NARRATION, INSTR(VC_NARRATION, 'AP0')), ',')-1);
+
+    SELECT
+      vc_CST_no,
+      VC_COMPANY_NAME,
+      VC_TELEPHONE1,
+      VC_ADDRESS1,
+      VC_ADDRESS2,
+      VC_CITY 
+    INTO
+      company_tin,
+      company_name,
+      phone_number, 
+      address_commune,
+      address_quartier,
+      address_avenue 
+    FROM
+      Makess.MST_COMPANY
+    WHERE
+      VC_COMP_CODE = :new.VC_COMP_CODE;
+           
+    
+    SELECT 
+      NU_CUSTOMER_CODE,
+      DT_INVOICE_DATE,
+      TO_CHAR(DT_CREATE_DATE,'YYYYMMDDHH24MISS'),
+      VC_MODE
+
+    INTO
+      customer_code,
+      invoice_date,
+      create_date,
+      payment_mode
+
+    FROM
+      SALES.HD_INVOICE
+
+    WHERE
+      VC_INVOICE_NO = invoice_no AND TO_CHAR(DT_CREATE_DATE, 'YYYYMMDD') = TO_CHAR(:new.DT_CREATE_DATE, 'YYYYMMDD');
+
+
+
+    SELECT
+      VC_TIN_NO,
+      vc_CUSTOMER_NAME,
+      VC_BILL_ADDRESS1
+    INTO
+      customer_tin,
+      customer_name,
+      customer_address 
+    FROM
+      Makess.MST_CUSTOMER
+    WHERE
+      NU_CUSTOMER_CODE = customer_code AND VC_COMP_CODE = :new.VC_COMP_CODE;
+
+
+    FOR item IN(
+    SELECT
+        A.NU_PRODUCT_QUANTITY,
+        A.NU_PRODUCT_RATE,
+        A.NU_VAT_VALUE,
+        A.NU_FIELD2,
+        A.NU_ORDER_QTY_VAL,
+        B.VC_PRODUCT_NAME
+    FROM
+        DT_INVOICE A, MST_PRODUCT B
+    WHERE
+        B.VC_PRODUCT_CODE=A.VC_PRODUCT_CODE AND B.VC_COMP_CODE = A.VC_COMP_CODE AND A.VC_INVOICE_NO = invoice_no AND A.VC_COMP_CODE = :new.VC_COMP_CODE AND A.DT_INVOICE_DATE = invoice_date)
+    
+    LOOP
+        single_item := '{
+          "item_designation": "'|| item.VC_PRODUCT_NAME ||'",
+          "item_quantity": "'|| item.NU_PRODUCT_QUANTITY ||'",
+          "item_price": "'|| item.NU_PRODUCT_RATE ||'",
+          "item_ct": "0",
+          "item_tl": "0",
+          "item_price_nvat": "'|| item.NU_PRODUCT_RATE ||'",
+          "vat": "'|| item.NU_VAT_VALUE ||'",
+          "item_price_wvat": "'|| item.NU_FIELD2 ||'",
+          "item_total_amount": "'|| item.NU_ORDER_QTY_VAL ||'"
+        },';
+
+        item_list := item_list || single_item ;
+        
+    END LOOP;
+
+
+
+    IF (payment_mode = 'Cash') THEN
+       payment_type := 1;
+    END IF;
+    
+    IF (payment_mode = 'Credit') THEN
+       payment_type := 3;
+    END IF;
+    
+    invoice_signature := company_tin||'/ws400000197600134/'|| create_date ||'/'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6)));
+    
+    data := '{
+      "invoice_number":"'|| TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(invoice_no,5,6))) ||'",
+      "invoice_date":"'|| TO_CHAR(create_date, 'YYYY-MM-DD HH24:MI:SS') ||'",
+      "invoice_type": "FN",
+      "tp_type": "2",
+      "tp_name": "'|| company_name ||'",
+      "tp_TIN": "'|| company_tin ||'",
+      "tp_trade_number": "62662",
+      "tp_postal_number": "",
+      "tp_phone_number": "'|| phone_number ||'",
+      "tp_address_commune": "'|| address_commune ||'",
+      "tp_address_quartier": "'|| address_quartier ||'",
+      "tp_address_avenue": "'|| address_avenue ||'",
+      "tp_address_rue": "",
+      "tp_address_number": "",
+      "vat_taxpayer": "0",
+      "ct_taxpayer": "0",
+      "tl_taxpayer": "0",
+      "tp_fiscal_center": "DGC",
+      "tp_activity_sector": "Pharmaceutical business",
+      "tp_legal_form": "LLC",
+      "payment_type": "'|| payment_type ||'",
+      "invoice_currency": "BIF",
+      "customer_name": "'|| customer_name ||'",
+      "customer_TIN": "'|| customer_tin ||'",
+      "customer_address": "'|| customer_address ||'",
+      "vat_customer_payer": "0",
+      "cancelled_invoice_ref": "",
+      "invoice_ref": "",
+      "invoice_signature": "'|| invoice_signature ||'",
+      "invoice_signature_date": "'|| TO_CHAR(sysdate, 'YYYY-MM-DD HH24:MI:SS') ||'",
+      "invoice_items": '|| item_list ||'
+    }';
+    
+    req := utl_http.begin_request(url, 'POST', 'HTTP/1.1');
+    utl_http.set_header(req, 'content-type', 'application/json');
+    utl_http.set_header(req, 'Content-Length', length(data));
+    
+    utl_http.write_text(req, data);
+    res := utl_http.get_response(req);
+    
+    utl_http.read_text(res, res_text);
+    json_obj := json_object_t(res_text);
+    utl_http.end_response(res);
+    
+    success := json_obj.get_string('success');
+
+    IF success = 'true' THEN
+        message :=  json_obj.get_string('msg');
+    END IF;
+    
+    IF success != 'true' THEN
+        message :=  json_obj.get_string('msg');
+    END IF;
+    
+
+    INSERT INTO SALES.EBMS_SALES_INVOICE_RES (MESSAGE, INVOICE_SIGNATURE, INVOICE_NUMBER, JSON) VALUES (message, invoice_signature, TO_CHAR(TRIM(LEADING 0 FROM SUBSTR(:new.VC_INVOICE_NO,5,6))), data);   
+    UPDATE SALES.HD_INVOICE SET URA_RTN_AFCODE = invoice_signature, VC_URA_MSG = message WHERE VC_INVOICE_NO = :new.VC_INVOICE_NO AND DT_INVOICE_DATE = :new.DT_INVOICE_DATE;
+END;
